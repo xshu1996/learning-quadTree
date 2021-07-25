@@ -1,9 +1,19 @@
-
+/**
+ * 同 cc.Rect 以矩形左下角为起点
+ */
 export interface Bounds {
     x: number,
     y: number,
     width: number,
-    height: number
+    height: number,
+}
+
+export enum EQuadrant {
+    None = -1,
+    First,
+    Second,
+    Third,
+    Fourth,
 }
 
 export default class QuadTree<T extends Bounds> {
@@ -17,7 +27,7 @@ export default class QuadTree<T extends Bounds> {
     /** 当前节点的层级 */
     public level: number;
     /** 当前节点所拥有的四个象限的子节点数组 */
-    public nodes: QuadTree<T>[];
+    public quadrant: QuadTree<T>[];
     /** 当前节点所存储的节点对象数组 */
     public objects: T[];
 
@@ -28,7 +38,7 @@ export default class QuadTree<T extends Bounds> {
         this.level = level || 0;
 
         this.objects = [];
-        this.nodes = [];
+        this.quadrant = [];
     }
 
     /** 将该节点分割为4个子节点 */
@@ -38,14 +48,14 @@ export default class QuadTree<T extends Bounds> {
             subHeight = this.bounds.height / 2,
             x = this.bounds.x,
             y = this.bounds.y;
-
-        const nodePosList: { x: number, y: number }[] = [
+        // 四个象限坐标系原点
+        const oriCoordinate: { x: number, y: number }[] = [
             { x: x + subWidth, y: y + subHeight },
             { x, y: y + subHeight },
             { x, y },
             { x: x + subWidth, y }
         ];
-        this.nodes = nodePosList.map(pos =>
+        this.quadrant = oriCoordinate.map(pos =>
             new QuadTree({
                 x: pos.x,
                 y: pos.y,
@@ -55,23 +65,35 @@ export default class QuadTree<T extends Bounds> {
         );
     }
 
-    public getIndex(obj: Bounds): number[] {
+    public getIndex(pRect: Bounds): number[] {
         let indexes: number[] = [];
+        const verticalMidpoint = this.bounds.x + (this.bounds.width / 2);
+        const horizontalMidpoint = this.bounds.y + (this.bounds.height / 2);
 
-        let verticalMidPoint = this.bounds.x + this.bounds.width / 2;
-        let horizonMidPoint = this.bounds.y + this.bounds.height / 2;
+        const endIsSouth = pRect.y < horizontalMidpoint,
+            startIsWest = pRect.x < verticalMidpoint,
+            endIsEast = pRect.x + pRect.width > verticalMidpoint,
+            startIsNorth = pRect.y + pRect.height > horizontalMidpoint;
 
-        // 判断象限
-        let isFirst = obj.x > verticalMidPoint && obj.y > horizonMidPoint;
-        let isSecond = obj.x < verticalMidPoint && obj.y > horizonMidPoint;
-        let isThird = obj.x < verticalMidPoint && obj.y < horizonMidPoint;
-        let isFour = obj.x > verticalMidPoint && obj.y < horizonMidPoint;
+        // top-right quad
+        if (startIsNorth && endIsEast) {
+            indexes.push(EQuadrant.First);
+        }
 
-        if (isFirst) indexes.push(0);
-        if (isSecond) indexes.push(1);
-        if (isThird) indexes.push(2);
-        if (isFour) indexes.push(3);
-        else indexes.push(-1);
+        // top-left quad
+        if (startIsWest && startIsNorth) {
+            indexes.push(EQuadrant.Second);
+        }
+
+        // bottom-left quad
+        if (startIsWest && endIsSouth) {
+            indexes.push(EQuadrant.Third);
+        }
+
+        // bottom-right quad
+        if (endIsEast && endIsSouth) {
+            indexes.push(EQuadrant.Fourth);
+        }
 
         // console.log("查看象限：", indexes);
         return indexes;
@@ -85,12 +107,12 @@ export default class QuadTree<T extends Bounds> {
         let i = 0,
             indexes;
         /** 如果该节点已经分裂了就将对象放到对应的子节点里面 */
-        if (this.nodes.length) {
+        if (this.quadrant.length > 0) {
             indexes = this.getIndex(obj);
 
             indexes.forEach(element => {
-                if (element !== -1) {
-                    this.nodes[element].insert(obj);
+                if (element !== EQuadrant.None) {
+                    this.quadrant[element].insert(obj);
                 }
             });
             return;
@@ -98,16 +120,16 @@ export default class QuadTree<T extends Bounds> {
         this.objects.push(obj);
         // 长度大于容量
         if (this.objects.length > this.maxObjects && this.level < this.maxLevel) {
-            /** 如果超过该节点所能容纳的最多节点就分裂并且将该节点下的所有对象都放到分裂的子节点下 */
-            if (!this.nodes.length) {
+            // 如果超过该节点所能容纳的最多节点就分裂并且将该节点下的所有对象都放到分裂的子节点下
+            if (this.quadrant.length === 0) {
                 /** 分裂 */
                 this.split();
             }
             this.objects.forEach(obj => {
                 this.getIndex(obj)
-                    .filter(ele => ele !== -1)
+                    .filter(ele => ele !== EQuadrant.None)
                     .forEach(ele => {
-                        this.nodes[ele].insert(this.objects[i]);
+                        this.quadrant[ele].insert(obj);
                     });
             });
 
@@ -125,11 +147,11 @@ export default class QuadTree<T extends Bounds> {
         let indexes = this.getIndex(obj),
             ret = this.objects;
 
-        if (this.nodes.length) {
+        if (this.quadrant.length > 0) {
             indexes
-                .filter(v => v !== -1)
+                .filter(v => v !== EQuadrant.None)
                 .forEach((ele) => {
-                    ret = ret.concat(this.nodes[ele].retrieve(obj));
+                    ret = ret.concat(this.quadrant[ele].retrieve(obj));
                 });
         }
         /** 去重 */
@@ -142,7 +164,7 @@ export default class QuadTree<T extends Bounds> {
 
     public clear(): void {
         this.objects.length = 0;
-        this.nodes.forEach(ele => ele.clear());
-        this.nodes.length = 0;
+        this.quadrant.forEach(ele => ele.clear());
+        this.quadrant.length = 0;
     }
 }
